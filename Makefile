@@ -1,5 +1,6 @@
 .PHONY: run test verify-zero-deps install-hook help
 
+# Default: show help
 help:
 	@echo "secretscan — zero-dependency secrets leak scanner"
 	@echo ""
