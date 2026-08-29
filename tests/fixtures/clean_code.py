@@ -9,3 +9,6 @@ class UserProfile:
         self.name = name
         self.email = email
 
+DEFAULT_PORT = 8080
+DEBUG_MODE = True
+MAX_RETRIES = 3
