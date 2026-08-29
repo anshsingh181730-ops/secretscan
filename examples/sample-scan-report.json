@@ -4,28 +4,28 @@
   "findings_count": 4,
   "findings": [
     {
-      "file": "C:\\Users\\anshs\\Downloads\\test-messy-project\\test-messy-project\\.env",
+      "file": "test-messy-project/.env",
       "line": 2,
       "type": "Slack Token",
       "match_redacted": "xoxb**********************************************uvwx",
       "confidence": "HIGH"
     },
     {
-      "file": "C:\\Users\\anshs\\Downloads\\test-messy-project\\test-messy-project\\.env",
+      "file": "test-messy-project/.env",
       "line": 3,
       "type": "High-entropy string (entropy=4.88)",
       "match_redacted": "kj3n************************3sD9",
       "confidence": "MEDIUM"
     },
     {
-      "file": "C:\\Users\\anshs\\Downloads\\test-messy-project\\test-messy-project\\backend\\config.py",
+      "file": "test-messy-project/backend/config.py",
       "line": 8,
       "type": "AWS Access Key",
       "match_redacted": "AKIA************MPLE",
       "confidence": "HIGH"
     },
     {
-      "file": "C:\\Users\\anshs\\Downloads\\test-messy-project\\test-messy-project\\backend\\config.py",
+      "file": "test-messy-project/backend/config.py",
       "line": 9,
       "type": "High-entropy string (entropy=4.66)",
       "match_redacted": "wJal********************************EKEY",
