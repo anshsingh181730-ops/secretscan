@@ -1,0 +1,56 @@
+secretscan — Zero Dependency Proof
+====================================
+
+1. requirements.txt is empty (see requirements.txt in repo root).
+
+2. Python version used for development and testing:
+   Python 3.12.3 (compatible with Python 3.10+; targets 3.14 per event cheat-sheet)
+
+3. Static import scan of all project source files
+   (secretscan.py, src/rules.py, src/scanner.py, src/reporter.py),
+   cross-checked against sys.stdlib_module_names:
+
+   argparse  -> STDLIB
+   fnmatch   -> STDLIB
+   json      -> STDLIB
+   math      -> STDLIB
+   os        -> STDLIB
+   re        -> STDLIB
+   sys       -> STDLIB
+   time      -> STDLIB
+   reporter  -> LOCAL (our own module, src/reporter.py)
+   rules     -> LOCAL (our own module, src/rules.py)
+   scanner   -> LOCAL (our own module, src/scanner.py)
+
+   Zero third-party imports found.
+
+4. To reproduce this proof yourself:
+
+   python3 -c "
+   import sys, ast
+   imports = set()
+   for fname in ['secretscan.py', 'src/rules.py', 'src/scanner.py', 'src/reporter.py']:
+       with open(fname) as f:
+           tree = ast.parse(f.read(), filename=fname)
+       for node in ast.walk(tree):
+           if isinstance(node, ast.Import):
+               for alias in node.names:
+                   imports.add(alias.name.split('.')[0])
+           elif isinstance(node, ast.ImportFrom):
+               if node.module:
+                   imports.add(node.module.split('.')[0])
+   stdlib = sys.stdlib_module_names
+   for m in sorted(imports):
+       status = 'STDLIB' if m in stdlib else 'LOCAL/NOT-STDLIB'
+       print(f'{m}: {status}')
+   "
+
+5. Strongest proof — running with Python's -S flag, which disables
+   site-packages entirely (no third-party package can be imported,
+   even if installed):
+
+   python3 -S secretscan.py scan tests/fixtures/sample_leak.py
+
+   Result: tool runs correctly and detects all 6 test secrets,
+   proving it depends on nothing outside the standard library.
+   (Verified during development — see project history.)
