@@ -9,6 +9,7 @@ library.
 **Language:** Python 3.10+ (developed and tested on 3.12, targets 3.14)
 **Team size:** 4
 
+
 ## The Problem
 
 Developers accidentally commit secrets to version control constantly —
@@ -19,6 +20,7 @@ but they are themselves dependencies you have to install — binaries to
 download, or packages to `pip install`. That's a little ironic for a
 *security* tool. `secretscan` needs nothing beyond a Python interpreter
 that's already on your machine.
+
 
 ## What It Does
 
@@ -35,6 +37,7 @@ Two layers of detection run together on every scanned line:
 
 Findings are always shown **redacted** (`AKIA****...MPLE`) — the full
 secret is never printed to your terminal, logs, or any output file.
+
 
 ### Beyond Basic Detection
 
@@ -67,9 +70,11 @@ secret is never printed to your terminal, logs, or any output file.
   missing from `.gitignore` gets flagged: that's the exact scenario
   the tool exists to catch.
 
+
 ## How To Run It
 
 No installation step required beyond Python itself.
+
 
 ### Getting the code
 
@@ -84,6 +89,7 @@ cd secretscan
 Or, from the GitHub repository page: **Code → Download ZIP**, then
 extract the archive and open a terminal inside the extracted
 `secretscan` folder before running any command below.
+
 
 ### Finding a file or folder's path (Windows)
 
@@ -101,6 +107,7 @@ you want to scan. To get that path on Windows:
 
 On macOS/Linux, right-click the file/folder and look for **Copy Path**
 (Finder) or run `pwd` inside the target folder in a terminal (Linux).
+
 
 ### Common commands
 
@@ -145,6 +152,7 @@ and git hooks gate on real risk rather than treating every heuristic
 match as a hard failure.
 
 ---
+
 
 ## Marking a Known-Safe Line
 
@@ -201,6 +209,7 @@ it falls short:
   formats vary by shell and configuration; we handle the common
   `.bash_history` / `.zsh_history` cases, not every possible setup.
 
+
 ## Project Layout
 
 ```
@@ -222,6 +231,7 @@ secretscan/
   .secretscan-baseline.json       # (generated) accepted findings, if used
 ```
 
+
 ## Testing
 
 ```bash
@@ -237,6 +247,7 @@ All test fixtures use **fake secrets only** — no real credentials are
 used anywhere in this repository. The AWS example key
 (`AKIAIOSFODNN7EXAMPLE`) is AWS's own published example key, safe to
 use in test code.
+
 
 ## Why Zero Dependencies, For a Security Tool Specifically
 
