@@ -124,11 +124,4 @@ def scan_file(filepath: str, pattern_finder, entropy_finder):
     return findings
 
 
-def scan_path(root: str, pattern_finder, entropy_finder):
-    """Scan a file or directory tree, return (findings, files_scanned_count)."""
-    all_findings = []
-    files_scanned = 0
-    for fpath in iter_target_files(root):
-        files_scanned += 1
-        all_findings.extend(scan_file(fpath, pattern_finder, entropy_finder))
-    return all_findings, files_scanned
+
