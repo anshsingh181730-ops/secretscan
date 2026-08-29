@@ -1,9 +1,4 @@
-"""
-reporter.py — Output formatting for secretscan.
 
-Two output modes: human-readable (colored terminal text via raw ANSI
-codes) and machine-readable JSON. Zero third-party dependencies.
-"""
 
 import json
 import time
@@ -71,4 +66,4 @@ def format_json(findings, files_scanned, elapsed_seconds):
         ],
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
     }
-    return json.dumps(payload, indent=2)
+    return json.dumps(payload, indent=2);
