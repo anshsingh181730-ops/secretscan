@@ -96,17 +96,6 @@ def find_pattern_matches(line: str):
     (to exclude surrounding quotes), use the last group; otherwise fall
     back to the full match.
     """
-    results = []
-    for name, pattern, confidence in PATTERN_RULES:
-        m = pattern.search(line)
-        if m:
-            if m.lastindex:
-                matched_text = m.group(m.lastindex)
-            else:
-                matched_text = m.group(0)
-            results.append((name, matched_text, confidence))
-    return results
-
 
 def find_entropy_matches(line: str, already_matched_spans=None):
     """
