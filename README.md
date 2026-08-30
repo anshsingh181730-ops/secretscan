@@ -6,7 +6,7 @@ before they get committed — using nothing but the Python standard
 library.
 
 **Track:** E — Security & Crypto Utilities
-**Language:** Python 3.10+ (developed and tested on 3.12, targets 3.14)
+**Language:** Python 3.11+ (developed and tested on 3.12, targets 3.14)
 **Team size:** 4
 
 
@@ -26,18 +26,20 @@ that's already on your machine.
 
 ### Detection Engine
 
-Two layers of detection run together on every scanned line:
+1. **Pattern matching** — recognizes common secret formats across cloud,
+   source-control, SaaS, authentication, key-material, and database families:
+   AWS access/secret/session credentials, Google API/OAuth credentials, Azure
+   SAS tokens, GitHub/GitLab/Bitbucket tokens, Slack/Discord tokens, Stripe,
+   SendGrid, npm, PyPI, Twilio, Heroku, Mailgun, Shopify, OpenAI, Hugging Face,
+   Databricks, JWT/Bearer/Basic credentials, private/PGP key headers, generic
+   credential assignments, authorization headers, and database credential URLs.
+   Provider-specific rules are combined with generic context-aware rules so
+   unknown vendor-specific credentials can still be surfaced without third-party
+   packages.
 
-1. **Pattern matching** — recognizes known secret formats: AWS access
-   keys, AWS secret keys, GitHub tokens, Slack tokens, private key
-   headers, JWTs, and generic `key = "..."` style assignments.
-2. **Entropy analysis** — flags quoted strings with high Shannon
-   entropy ("looks random") even when they don't match a known format,
-   catching custom or unusual secret formats pattern rules would miss.
-
-Findings are always shown **redacted** (`AKIA****...MPLE`) — the full
-secret is never printed to your terminal, logs, or any output file.
-
+2. **Entropy analysis** — checks quoted strings that look random even when they
+   do not match a known provider format. Entropy findings are filtered using
+   conservative context rules to reduce common false positives.
 
 ### Beyond Basic Detection
 
@@ -69,6 +71,13 @@ secret is never printed to your terminal, logs, or any output file.
   reach a commit are scanned — which is precisely why a `.env` file
   missing from `.gitignore` gets flagged: that's the exact scenario
   the tool exists to catch.
+- **Skipped-file reporting** — every file excluded from a scan (binary
+  extension, `.gitignore` match, over the 5 MB cap, or unreadable) is
+  counted and categorized, not just silently dropped. The human
+  summary shows a total and per-reason breakdown; `--json` includes
+  the full breakdown plus a sample of individual skipped paths, so a
+  secret sitting in a file that's just over the size cap can't
+  disappear with zero signal.
 
 
 ## How To Run It
@@ -140,7 +149,7 @@ installation registers itself under that name.
 Or with `make` (Linux/macOS, or Windows with `make` installed):
 
 ```bash
-make run PATH=./my-project
+make run TARGET=./my-project
 make test                  # run the full test suite
 make verify-zero-deps      # prove zero third-party dependencies
 make install-hook          # install as a git pre-commit hook
@@ -167,28 +176,103 @@ this is an escape hatch, not a way to silence real findings.
 
 - `.git`, `node_modules`, `__pycache__`, `.venv`, `venv`, `dist`,
   `build`, and common cache directories — always skipped.
-- Anything matched by patterns in a `.gitignore` at the scan root —
-  since a file that can't be committed doesn't need flagging.
+- Anything matched by applicable `.gitignore` rules, including nested
+  `.gitignore` files and ordered negation rules — these are files normally
+  excluded from version control. (Git still allows force-adding an ignored
+  file with `git add -f`; the pre-commit hook is protected against this
+  because it passes the actual staged files to the scanner directly,
+  bypassing directory-walk filtering entirely — see `TestPreCommitHookIntegration`.)
 - Binary file extensions (images, archives, compiled binaries, fonts,
   media files).
 - Files larger than 5 MB (very unlikely to be hand-written source).
 - Lines explicitly marked with `# secretscan-ignore`.
 - Findings already recorded in `.secretscan-baseline.json`.
 
+The test suite (`tests/test_scanner.py`) uses `subprocess` to create and
+drive real git repos when testing the optional pre-commit hook — that's
+test infrastructure exercising git, not the scanner. The `secretscan`
+runtime itself (including `dist/secretscan_single.py`) contains zero
+`subprocess` calls; see `deps-proof.txt` section 6.
+
+## Bugs Found And Fixed
+
+In the spirit of the "Honest Limitations" section below, these are
+real defects that existed in earlier drafts of this tool and were
+found and fixed before submission — not limitations we're choosing to
+live with, but bugs that are now closed:
+
+- **Unquoted filenames in the git hook.** The generated
+  `.git/hooks/pre-commit` script used to capture staged filenames into
+  a shell variable and expand it unquoted
+  (`"$SCANNER" scan $STAGED_FILES`). POSIX shell word-splits an
+  unquoted expansion on whitespace, so a staged path containing a
+  space broke into bogus fragments, and a filename starting with `-`
+  (e.g. `-secrets.env`) could be parsed by `argparse` as a flag
+  instead of a path. Fixed by never putting filenames in a shell
+  variable at all: the hook now streams `git diff -z` (NUL-delimited)
+  straight through `xargs -0` into `secretscan.py scan --`, with `--`
+  guaranteeing every argument after it is treated as a path. Covered
+  by an integration test (`TestPreCommitHookIntegration` in
+  `tests/test_scanner.py`) that installs the real hook into a real git
+  repo and commits a file named `-weird secret.env` to prove both the
+  block (secret present) and the pass-through (secret absent) work.
+- **Silently skipped files.** Files excluded from a scan (binary
+  extension, `.gitignore` match, over the 5 MB cap, unreadable) used
+  to vanish with no count or listing anywhere in CLI/JSON/HTML output
+  — only a static, non-quantified line in the interactive UI's
+  pre-scan help text. Fixed by adding a `SkipLog` (`src/scanner.py`)
+  that every scan populates with exact counts per reason plus a capped
+  sample of paths, now surfaced in the human summary, `--json` output,
+  the HTML report, and the interactive UI's results screen. See
+  `TestSkippedFileTracking` in `tests/test_scanner.py`.
+- **`make run PATH=...` in this README didn't work.** `PATH` is a
+  reserved variable (the executable search path); passing
+  `PATH=./my-project` to `make` overrode it for that invocation and
+  `python3` could no longer be found, so the documented command failed
+  outright. The Makefile's variable was already named `TARGET` — only
+  the README's example was wrong. Fixed to `make run TARGET=./my-project`.
+
+- **`.gitignore` semantics.** Earlier versions used simple `fnmatch()` rules,
+  so negation (`!important.env`), directory-only patterns (`secrets/`),
+  `**` globbing, and nested `.gitignore` files could be handled incorrectly.
+  Fixed by adding ordered gitignore rule evaluation with negation,
+  directory-aware matching, globstar support, and nested ignore-file loading.
+- **Shell history coverage.** Earlier versions recognized only `.bash_history`
+  and `.zsh_history`. Fixed by covering common POSIX/sh, ksh/mksh, Fish,
+  csh/tcsh, and PowerShell history filenames while keeping history scanning
+  opt-in.
+- **`--html-report PATH` didn't honor `PATH`.** It only kept the requested
+  *directory* and then wrote its own derived filename
+  (`<base>_report.html`) into it, so `--html-report /tmp/custom.html`
+  silently produced `/tmp/clean_code_report.html` instead of
+  `/tmp/custom.html`. Fixed to write exactly the path given. Covered by
+  `TestHtmlReportFilename` in `tests/test_scanner.py`.
+
 ## Honest Limitations
 
 This is a heuristic scanner, not a guarantee. Being upfront about where
 it falls short:
 
-- **False positives happen.** A sufficiently random-looking string (a
-  hash, a UUID, test fixture data) can trigger the entropy detector.
-  This is a known, accepted trade-off in every secret scanner,
-  including the popular ones — catching more real secrets means
-  tolerating some noise. Severity levels and the baseline file exist
-  specifically to make this manageable in practice.
-- **False negatives happen too.** A secret split across multiple
-  lines, heavily obfuscated, or in a format not covered by our pattern
-  list (`PATTERN_RULES` in `src/rules.py`) will be missed. This tool is
+- **Entropy is still heuristic, but it is aggressively false-positive hardened.**
+  Before scoring, the detector filters UUIDs, conventional fixed-width
+  hexadecimal digests, common machine identifiers/integrity values, data-URI
+  payloads, and clearly marked test/example/fixture values when they are not
+  assigned to a secret-like field. Secret-like context takes precedence so an
+  unknown credential is not discarded merely because it resembles generated
+  data. This substantially reduces common false positives, but it cannot make
+  entropy detection mathematically 100% false-positive-free: entropy alone
+  cannot prove that an unknown value is a credential.
+- **Detector coverage is intentionally finite.** Pattern coverage has been
+  expanded to include Google API keys, Stripe secret keys, SendGrid API
+  keys, npm access tokens, Twilio auth tokens, Bearer tokens, and common
+  PostgreSQL/MySQL/MongoDB/Redis credential URLs, in addition to the
+  original AWS, GitHub, Slack, private-key, JWT, and generic assignment
+  rules. This is a meaningful coverage improvement, but it is not intended
+  to match mature scanners or detect every vendor-specific credential
+  format.
+- **False negatives happen too.** A secret split across multiple lines,
+  heavily obfuscated, or in a format not covered by our pattern list
+  (`PATTERN_RULES` in `src/rules.py`) will be missed. This tool is
   a safety net, not a substitute for careful review or a secrets
   manager.
 - **Entropy threshold is a tuned constant** (4.3 bits/char, 20-char
@@ -201,13 +285,15 @@ it falls short:
   key is "live," and never sends your code anywhere. Detection is
   100% local pattern/entropy analysis, verifiable by running with
   `python -S` (site-packages disabled) and confirming it still works.
-- **`.gitignore` support is basic.** It uses `fnmatch` glob matching,
-  not full gitignore-spec semantics (no negation patterns, no
-  directory-only markers). Good enough for common cases, not a full
-  implementation.
-- **Shell history scanning is opt-in and best-effort.** History file
-  formats vary by shell and configuration; we handle the common
-  `.bash_history` / `.zsh_history` cases, not every possible setup.
+- **`.gitignore` compatibility is implemented locally.** Ordered rules,
+  negation, directory-only rules, `**` globbing, and nested `.gitignore`
+  files are supported without invoking Git. The matcher intentionally avoids
+  external packages and remains a practical implementation rather than a
+  promise of byte-for-byte equivalence with every historical Git edge case.
+- **Shell history scanning is opt-in and best-effort.** History filenames
+  and locations are configurable by each shell, so no filename-based scanner
+  can discover every custom history file. We cover the common Bash, Zsh,
+  POSIX/sh, ksh/mksh, Fish, csh/tcsh, and PowerShell/PSReadLine filenames.
 
 
 ## Project Layout
@@ -217,11 +303,18 @@ secretscan/
   README.md
   STDLIB.md
   Makefile
-  secretscan.py            # CLI entry point
+  secretscan.py            # CLI entry point (modular dev version)
+  build_single_file.py     # deterministic bundler -> dist/secretscan_single.py
+  scripts/
+    verify_reproducible_build.sh  # proves two builds hash identically
+  dist/
+    secretscan_single.py   # (generated) whole project as one file
   src/
     rules.py                # pattern + entropy detection rules
-    scanner.py                # file/directory walking and scan orchestration
-    reporter.py                 # human-readable + JSON output formatting
+    scanner.py                # file/directory walking, scan orchestration, SkipLog
+    reporter.py                 # human-readable + JSON + HTML output formatting
+    config.py                     # .secretscan.toml config loading
+    terminal_ui.py                  # interactive terminal UI
   tests/
     test_scanner.py             # unittest suite
     fixtures/                     # sample files with fake secrets for testing
@@ -232,6 +325,59 @@ secretscan/
 ```
 
 
+## Single-File Build
+
+The modular layout under `src/` is for development, but the project also
+ships as **one standalone file**: `dist/secretscan_single.py`, generated
+from `secretscan.py` + `src/*.py` by `build_single_file.py` (itself
+stdlib-only — the bundler adds no third-party dependency either).
+
+```bash
+python3 build_single_file.py
+python3 dist/secretscan_single.py scan <path>
+```
+
+The bundle is a genuinely complete, runnable copy of the tool — same CLI,
+same detectors, same zero dependencies — just merged into a single
+`.py` file for anyone who wants one file to copy/vendor/audit.
+
+### Reproducible Build
+
+`build_single_file.py` is deterministic: fixed module order, no
+timestamps, no environment-dependent output, sorted import list. Two
+independent builds from the same source produce a **byte-identical**
+file.
+
+```bash
+sh scripts/verify_reproducible_build.sh
+```
+
+(`verify_reproducible_build.sh` and the pre-commit hook installed by
+`install-hook` are POSIX `/bin/sh` scripts — build/dev tooling, not part
+of the scanner's runtime. `secretscan` itself, including
+`dist/secretscan_single.py`, is cross-platform Python stdlib-only and
+runs the same on Windows, macOS, and Linux; these two optional shell
+scripts assume a POSIX shell, and `verify_reproducible_build.sh` in
+particular only *orchestrates* the two builds in shell — the actual
+hashing is `hashlib.sha256` in Python, not the external `sha256sum`
+binary, precisely so it doesn't need a GNU-coreutils tool that isn't
+on macOS by default. The pre-commit hook does call `git`/`xargs`
+directly, since driving git's own hook mechanism requires it.)
+
+Verified hashes (SHA256 of `dist/secretscan_single.py`), from two
+separate build runs:
+
+```
+Build #1: 1e44cd80b0d15e3b0599b19d15744eb7d60a66ab055ecd1aa669eb7d00fd4a22
+Build #2: 1e44cd80b0d15e3b0599b19d15744eb7d60a66ab055ecd1aa669eb7d00fd4a22
+```
+
+Both hashes match — confirming the build is reproducible. (Hashes
+change whenever the source under `src/` or `secretscan.py` changes —
+re-run `scripts/verify_reproducible_build.sh` after any edit and
+update this section.)
+
+
 ## Testing
 
 ```bash
@@ -240,8 +386,13 @@ python3 -m unittest discover -s tests -v
 
 The suite covers: every pattern rule against a known fake-secret
 format, entropy detection on random vs. normal strings, redaction
-correctness, directory-walk exclusions (`.git`, `node_modules`), and
-false-positive checks on ordinary code.
+correctness, directory-walk exclusions (`.git`, `node_modules`),
+false-positive checks on ordinary code, skipped-file tracking and
+reporting across all three output formats, and a real end-to-end git
+integration test that installs the pre-commit hook into a throwaway
+repo and confirms it blocks a commit containing a HIGH-confidence
+secret in a filename with a space and a leading dash (the exact case
+the hook-quoting bug missed) — including regression tests for gitignore negation/nested rules and broader shell-history coverage.
 
 All test fixtures use **fake secrets only** — no real credentials are
 used anywhere in this repository. The AWS example key
