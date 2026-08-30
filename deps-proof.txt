@@ -6,30 +6,52 @@ secretscan — Zero Dependency Proof
 2. Python version used for development and testing:
    Python 3.12.3 (compatible with Python 3.10+; targets 3.14 per event cheat-sheet)
 
-3. Static import scan of all project source files
-   (secretscan.py, src/rules.py, src/scanner.py, src/reporter.py),
-   cross-checked against sys.stdlib_module_names:
+3. Static import scan of EVERY shipped Python file — the runtime tool,
+   the generated Single-File-bonus artifact, AND the bonus-challenge
+   tooling (secretscan.py, src/rules.py, src/scanner.py, src/reporter.py,
+   src/config.py, src/terminal_ui.py, build_single_file.py,
+   dist/secretscan_single.py) — cross-checked against
+   sys.stdlib_module_names:
 
-   argparse  -> STDLIB
-   fnmatch   -> STDLIB
-   json      -> STDLIB
-   math      -> STDLIB
-   os        -> STDLIB
-   re        -> STDLIB
-   sys       -> STDLIB
-   time      -> STDLIB
-   reporter  -> LOCAL (our own module, src/reporter.py)
-   rules     -> LOCAL (our own module, src/rules.py)
-   scanner   -> LOCAL (our own module, src/scanner.py)
+   __future__   -> STDLIB
+   argparse     -> STDLIB
+   ast          -> STDLIB   (build_single_file.py only)
+   dataclasses  -> STDLIB
+   hashlib      -> STDLIB
+   html         -> STDLIB
+   json         -> STDLIB
+   math         -> STDLIB
+   os           -> STDLIB
+   pathlib      -> STDLIB
+   re           -> STDLIB
+   sys          -> STDLIB
+   time         -> STDLIB
+   tomllib      -> STDLIB
+   typing       -> STDLIB
+   config       -> LOCAL (our own module, src/config.py)
+   reporter     -> LOCAL (our own module, src/reporter.py)
+   rules        -> LOCAL (our own module, src/rules.py)
+   scanner      -> LOCAL (our own module, src/scanner.py)
+   terminal_ui  -> LOCAL (our own module, src/terminal_ui.py)
 
-   Zero third-party imports found.
+   Zero third-party imports found in any shipped file. Notably: no
+   `subprocess` and no other mechanism that shells out to an
+   externally installed tool (git, etc.) anywhere in this list — see
+   the note in section 6.
 
-4. To reproduce this proof yourself:
+4. To reproduce this proof yourself (this scans EVERY shipped .py
+   file, including the Single-File-bonus bundler AND the generated
+   dist/secretscan_single.py it produces — update the list below if
+   you add a new file, and re-run `python3 build_single_file.py`
+   first if dist/secretscan_single.py is stale):
 
    python3 -c "
    import sys, ast
+   files = ['secretscan.py', 'src/rules.py', 'src/scanner.py',
+            'src/reporter.py', 'src/config.py', 'src/terminal_ui.py',
+            'build_single_file.py', 'dist/secretscan_single.py']
    imports = set()
-   for fname in ['secretscan.py', 'src/rules.py', 'src/scanner.py', 'src/reporter.py']:
+   for fname in files:
        with open(fname) as f:
            tree = ast.parse(f.read(), filename=fname)
        for node in ast.walk(tree):
@@ -46,11 +68,46 @@ secretscan — Zero Dependency Proof
    "
 
 5. Strongest proof — running with Python's -S flag, which disables
-   site-packages entirely (no third-party package can be imported,
-   even if installed):
+   site-packages entirely (no third-party PIP package can be
+   imported, even if installed):
 
    python3 -S secretscan.py scan tests/fixtures/sample_leak.py
 
-   Result: tool runs correctly and detects all 6 test secrets,
-   proving it depends on nothing outside the standard library.
-   (Verified during development — see project history.)
+   Result: tool runs correctly and detects all 6 test secrets
+   (AWS Access Key, AWS Secret Key, GitHub Token, Slack Token,
+   Generic API Key Assignment, and one high-entropy string), exiting
+   with code 1 (HIGH-confidence findings present). Re-run
+   `make verify-zero-deps` to confirm this yourself — it checks the
+   actual exit code rather than assuming success.
+
+6. On git: this tool does NOT invoke git (or any other externally
+   installed tool) at runtime from Python. `subprocess` does not
+   appear anywhere in the import list above. The installed
+   pre-commit hook (`secretscan.py install-hook`) is a plain POSIX
+   /bin/sh script that git itself executes as part of its own commit
+   machinery. That script uses `git diff --cached --quiet` to check
+   whether anything relevant is staged, then streams the NUL-delimited
+   staged-file list straight through `xargs -0` into `secretscan.py
+   scan --` — no Python code ever spawns git, and filenames containing
+   spaces, leading dashes, or other shell-special characters are
+   handled safely (verified in `TestPreCommitHookIntegration` in
+   tests/test_scanner.py, which installs the real hook into a
+   throwaway repo and commits a file literally named
+   `-weird secret.env`).
+
+7. On the Single File / Reproducible Build bonus tooling:
+   `build_single_file.py` (the AST-based bundler that produces
+   dist/secretscan_single.py) imports only `ast` and `pathlib`, both
+   stdlib — confirmed in the list above. `scripts/verify_reproducible_build.sh`
+   is a thin POSIX shell orchestrator: it runs the build twice and hands
+   both output files to Python's own `hashlib.sha256` (invoked inline via
+   `python3 -c`) to compare them — it deliberately does NOT shell out to
+   the external `sha256sum` binary, since that's a GNU coreutils tool
+   that isn't present by default on macOS and this project's whole point
+   is not depending on externally installed tools when the standard
+   library already covers it. Either way, that script is a
+   developer-side build-verification script, not part of the shipped
+   runtime artifact (the same category the event rules carve out for
+   your compiler/build tool/formatter), and it never ships inside
+   dist/secretscan_single.py or affects what the scanner does at
+   runtime.
