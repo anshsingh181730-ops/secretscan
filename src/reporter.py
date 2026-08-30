@@ -29,12 +29,33 @@ def _finding_context(finding):
     return getattr(finding, "line_context", "") or "[REDACTED CONTEXT UNAVAILABLE]"
 
 
+def _skip_summary_dict(skipped):
+    """Normalize a SkipLog (or dict, or None) to a plain dict, or None
+    if there's nothing to report."""
+    if skipped is None:
+        return None
+    if hasattr(skipped, "as_dict"):
+        skipped = skipped.as_dict()
+    if not skipped.get("counts"):
+        return None
+    return skipped
+
+
+def _skip_reason_label(reason):
+    try:
+        from scanner import SKIP_REASON_LABELS
+        return SKIP_REASON_LABELS.get(reason, reason)
+    except ImportError:
+        return reason
+
+
 def format_human(
     findings,
     files_scanned,
     elapsed_seconds,
     use_color=None,
     show_fix_suggest=False,
+    skipped=None,
 ):
     if use_color is None:
         use_color = _supports_color()
@@ -52,8 +73,20 @@ def format_human(
         f"Findings: {len(findings)} "
         f"(HIGH={high}, MEDIUM={medium}, LOW={low})",
         f"Scan finished in {elapsed_seconds:.2f}s.",
-        "",
     ]
+
+    skip_summary = _skip_summary_dict(skipped)
+    if skip_summary:
+        breakdown = ", ".join(
+            f"{_skip_reason_label(reason)}={count}"
+            for reason, count in sorted(skip_summary["counts"].items())
+        )
+        lines.append(
+            f"Files skipped: {skip_summary['total']} ({breakdown}) "
+            "— re-run with --json for the individual paths."
+        )
+
+    lines.append("")
 
     if not findings:
         lines.append(c(GREEN, "✓ No secrets found."))
@@ -93,7 +126,13 @@ def format_human(
     return "\n".join(lines)
 
 
-def format_json(findings, files_scanned, elapsed_seconds):
+def format_json(findings, files_scanned, elapsed_seconds, skipped=None):
+    skip_summary = _skip_summary_dict(skipped) or {
+        "total": 0,
+        "counts": {},
+        "samples": [],
+    }
+
     payload = {
         "files_scanned": files_scanned,
         "elapsed_seconds": round(elapsed_seconds, 4),
@@ -103,6 +142,9 @@ def format_json(findings, files_scanned, elapsed_seconds):
             "MEDIUM": sum(f.confidence == "MEDIUM" for f in findings),
             "LOW": sum(f.confidence == "LOW" for f in findings),
         },
+        "files_skipped": skip_summary["total"],
+        "files_skipped_by_reason": skip_summary["counts"],
+        "files_skipped_samples": skip_summary["samples"],
         "findings": [
             {
                 "file": f.filepath,
@@ -126,12 +168,14 @@ def write_json_report(
     files_scanned,
     elapsed_seconds,
     output_path,
+    skipped=None,
 ):
     """Write the JSON scan report to disk."""
     document = format_json(
         findings,
         files_scanned,
         elapsed_seconds,
+        skipped=skipped,
     )
 
     with open(output_path, "w", encoding="utf-8") as handle:
@@ -144,11 +188,43 @@ def write_html_report(
     elapsed_seconds,
     output_path,
     target,
+    skipped=None,
 ):
     """Write a self-contained, dependency-free HTML report."""
     high = sum(f.confidence == "HIGH" for f in findings)
     medium = sum(f.confidence == "MEDIUM" for f in findings)
     low = sum(f.confidence == "LOW" for f in findings)
+
+    skip_summary = _skip_summary_dict(skipped)
+    skip_badge = ""
+    skip_section = ""
+    if skip_summary:
+        skip_badge = f'<span class="badge">Skipped: {skip_summary["total"]}</span>'
+        reason_items = "".join(
+            f"<li>{html.escape(_skip_reason_label(reason))}: {count}</li>"
+            for reason, count in sorted(skip_summary["counts"].items())
+        )
+        sample_items = "".join(
+            f"<li><code>{html.escape(str(s['path']))}</code> "
+            f"— {html.escape(_skip_reason_label(s['reason']))}</li>"
+            for s in skip_summary["samples"]
+        )
+        sample_note = (
+            f"<p class=\"note\">Showing {len(skip_summary['samples'])} "
+            f"of {skip_summary['total']} skipped file(s); re-run with "
+            "--json for the complete list.</p>"
+            if skip_summary["total"] > len(skip_summary["samples"])
+            else ""
+        )
+        skip_section = f"""
+<h2>Skipped Files</h2>
+<p class="note">Files excluded from this scan (binary, .gitignore match,
+over the size cap, or unreadable) — no secret in a skipped file can be
+detected, so this section exists so that's never silent.</p>
+<ul>{reason_items}</ul>
+{sample_items and f"<ul>{sample_items}</ul>"}
+{sample_note}
+"""
 
     rows = []
     for finding in findings:
@@ -195,6 +271,7 @@ code {{ white-space: pre-wrap; overflow-wrap: anywhere; }}
 <span class="badge">MEDIUM: {medium}</span>
 <span class="badge">LOW: {low}</span>
 <span class="badge">Time: {elapsed_seconds:.4f}s</span>
+{skip_badge}
 </p>
 <p class="note">Detected values and line context are redacted.</p>
 <table>
@@ -206,6 +283,7 @@ code {{ white-space: pre-wrap; overflow-wrap: anywhere; }}
 {''.join(rows)}
 </tbody>
 </table>
+{skip_section}
 </body>
 </html>
 """
