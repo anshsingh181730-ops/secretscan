@@ -5,11 +5,18 @@ Standard-library-only scanner with:
 - recursive directory scanning
 - .gitignore-aware filtering
 - binary/oversize skipping
-- .bash_history / .zsh_history scanning
+- .bash_history / .zsh_history scanning (opt-in)
 - inline ignore support
 - safe redacted line context
-- optional git-staged-only scanning
 - baseline fingerprints
+
+No part of this module invokes an external tool (git, etc.) at
+runtime. Staged-file scanning is handled entirely by the pre-commit
+hook shell script (see secretscan.py's PRE_COMMIT_HOOK_TEMPLATE),
+which passes the already-staged file list to `scan` as ordinary
+positional arguments. That keeps the git interaction inside git's own
+hook mechanism instead of making this artifact shell out to git
+itself — see STDLIB.md for the reasoning.
 """
 
 from __future__ import annotations
@@ -17,7 +24,6 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import os
-import subprocess
 
 from rules import is_inline_ignored
 
@@ -105,11 +111,15 @@ def is_ignored_by_patterns(relpath: str, patterns) -> bool:
     return False
 
 
-def _file_allowed(fpath: str, relpath: str, ignore_patterns) -> bool:
+def _file_allowed(fpath: str, relpath: str, ignore_patterns, include_history: bool) -> bool:
     fname = os.path.basename(fpath)
     ext = os.path.splitext(fname)[1].lower()
+    is_history_file = fname in HISTORY_FILENAMES
 
-    if ext in BINARY_EXTENSIONS and fname not in HISTORY_FILENAMES:
+    if is_history_file and not include_history:
+        return False
+
+    if ext in BINARY_EXTENSIONS and not is_history_file:
         return False
 
     if is_ignored_by_patterns(relpath, ignore_patterns):
@@ -124,8 +134,19 @@ def _file_allowed(fpath: str, relpath: str, ignore_patterns) -> bool:
     return True
 
 
-def iter_target_files(root: str, extra_ignore_dirs=None, max_file_size_bytes=None):
-    """Yield eligible files under root."""
+def iter_target_files(
+    root: str,
+    extra_ignore_dirs=None,
+    max_file_size_bytes=None,
+    include_history=False,
+):
+    """Yield eligible files under root.
+
+    Shell history files (.bash_history, .zsh_history) are skipped by
+    default — set include_history=True (--include-shell-history on
+    the CLI) to opt in, since scanning a user's shell history is more
+    invasive than scanning a project's own source files.
+    """
     if os.path.isfile(root):
         yield root
         return
@@ -144,90 +165,13 @@ def iter_target_files(root: str, extra_ignore_dirs=None, max_file_size_bytes=Non
             fpath = os.path.join(dirpath, fname)
             relpath = os.path.relpath(fpath, root)
 
-            if _file_allowed(fpath, relpath, ignore_patterns):
+            if _file_allowed(fpath, relpath, ignore_patterns, include_history):
                 try:
                     if os.path.getsize(fpath) > max_size:
                         continue
                 except OSError:
                     continue
                 yield fpath
-
-
-def _git_repo_root(path: str) -> str | None:
-    """Resolve the git repository root without invoking a shell."""
-    probe = path if os.path.isdir(path) else os.path.dirname(path)
-    try:
-        result = subprocess.run(
-            ["git", "-C", os.path.abspath(probe), "rev-parse", "--show-toplevel"],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=True,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-
-    root = result.stdout.strip()
-    return root or None
-
-
-def iter_staged_files(root: str, extra_ignore_dirs=None, max_file_size_bytes=None):
-    """
-    Yield staged, added/copied/modified/renamed files.
-
-    Deleted files are naturally absent from the working tree and are
-    not scanned.
-    """
-    repo_root = _git_repo_root(root)
-    if not repo_root:
-        return
-
-    try:
-        result = subprocess.run(
-            [
-                "git", "-C", repo_root,
-                "diff", "--cached",
-                "--name-only",
-                "--diff-filter=ACMR",
-                "-z",
-            ],
-            capture_output=True,
-            check=True,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return
-
-    try:
-        names = result.stdout.decode("utf-8", errors="surrogateescape").split("\0")
-    except AttributeError:
-        return
-
-    target_root = os.path.abspath(root)
-    ignore_patterns = load_ignore_patterns(repo_root)
-    max_size = max_file_size_bytes or MAX_FILE_SIZE_BYTES
-
-    for name in names:
-        if not name:
-            continue
-
-        fpath = os.path.abspath(os.path.join(repo_root, name))
-
-        if os.path.isdir(target_root):
-            try:
-                common = os.path.commonpath([target_root, fpath])
-            except ValueError:
-                continue
-            if common != target_root:
-                continue
-        elif os.path.abspath(target_root) != fpath:
-            continue
-
-        relpath = os.path.relpath(fpath, repo_root)
-        if os.path.isfile(fpath) and _file_allowed(
-            fpath, relpath, ignore_patterns
-        ):
-            yield fpath
 
 
 def _redact_line(line: str, spans) -> str:
@@ -429,42 +373,43 @@ def scan_file(filepath: str, pattern_finder, entropy_finder, root=None):
 
 
 def scan_path(
-    root,
+    roots,
     pattern_finder,
     entropy_finder,
-    staged_only=False,
     extra_ignore_dirs=None,
     max_file_size_bytes=None,
+    include_history=False,
 ):
     """
-    Scan a file/directory and return (findings, files_scanned).
+    Scan one or more files/directories and return (findings, files_scanned).
 
-    When staged_only=True, only currently staged files are considered.
+    `roots` may be a single path string or a list of path strings —
+    the pre-commit hook passes a list of already-staged files here
+    (obtained by the hook script itself via `git diff --cached`), so
+    this module never needs to query git directly.
     """
-    root = os.path.abspath(root)
-
-    if staged_only:
-        candidates = iter_staged_files(root, extra_ignore_dirs, max_file_size_bytes)
-        scan_root = _git_repo_root(root) or (
-            root if os.path.isdir(root) else os.path.dirname(root)
-        )
-    else:
-        candidates = iter_target_files(root, extra_ignore_dirs, max_file_size_bytes)
-        scan_root = root if os.path.isdir(root) else os.path.dirname(root)
+    if isinstance(roots, str):
+        roots = [roots]
 
     all_findings = []
     files_scanned = 0
 
-    for filepath in candidates:
-        files_scanned += 1
-        all_findings.extend(
-            scan_file(
-                filepath,
-                pattern_finder,
-                entropy_finder,
-                root=scan_root,
+    for root in roots:
+        root = os.path.abspath(root)
+        scan_root = root if os.path.isdir(root) else os.path.dirname(root)
+
+        for filepath in iter_target_files(
+            root, extra_ignore_dirs, max_file_size_bytes, include_history
+        ):
+            files_scanned += 1
+            all_findings.extend(
+                scan_file(
+                    filepath,
+                    pattern_finder,
+                    entropy_finder,
+                    root=scan_root,
+                )
             )
-        )
 
     return all_findings, files_scanned
 
