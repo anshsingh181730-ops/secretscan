@@ -5,7 +5,7 @@ aws_secret_access_key = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
 
 GITHUB_TOKEN = "ghp_1234567890abcdefghijklmnopqrstuvwxyz12"
 
-slack_token = "xoxb-" + "1234567890-" + "1234567890123-" + "fakefakefakefakefake"
+slack_token = "FAKE-SLACK-TEST-VALUE"
 
 api_key = "sk_test_thisIsNotARealKey123456789"
 
