@@ -262,28 +262,33 @@ SecretScan is a safety net, not a replacement for careful review or a secrets ma
 
 ```text
 secretscan/
-├── README.md
-├── STDLIB.md
-├── Makefile
-├── secretscan.py
-├── build_single_file.py
-├── scripts/
-│   └── verify_reproducible_build.sh
 ├── dist/
 │   └── secretscan_single.py
+├── examples/
+│   └── sample-scan-report.json
+├── scripts/
+│   └── verify_reproducible_build.sh
 ├── src/
+│   ├── config.py
+│   ├── reporter.py
 │   ├── rules.py
 │   ├── scanner.py
-│   ├── reporter.py
-│   ├── config.py
 │   └── terminal_ui.py
 ├── tests/
-│   ├── test_scanner.py
 │   └── fixtures/
-├── requirements.txt
-├── deps-proof.txt
+│     ├── clean_code.py
+│     └── sample_leak.py
+│   ├── test_scanner.py
+├── .gitignore
 ├── .zero-dep.toml
-└── .secretscan-baseline.json
+├── LICENSE
+├── Makefile
+├── README.md
+├── STDLIB.md
+├── build_single_file.py
+├── deps-proof.txt
+├── requirements.txt
+└── secretscan.py
 ```
 
 ## Single-File Build
