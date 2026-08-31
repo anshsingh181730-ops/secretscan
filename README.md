@@ -130,7 +130,7 @@ python secretscan.py scan "PATH_TO_FILE_OR_FOLDER"
 Example:
 
 ```bash
-python secretscan.py scan "C:\Users\SATYAM SINGH\Downloads\my-project"
+python secretscan.py scan "C:\Users\JohnDoe\Downloads\my-project"
 ```
 
 ## Finding a File or Folder Path on Windows
@@ -145,7 +145,7 @@ python secretscan.py scan "C:\Users\SATYAM SINGH\Downloads\my-project"
 Example:
 
 ```text
-"C:\Users\SATYAM SINGH\Downloads\Smart Resume Builder"
+"C:\Users\JohnDoe\Downloads\Smart Resume Builder"
 ```
 
 ## Git Pre-Commit Hook
